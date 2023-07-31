@@ -105,12 +105,6 @@ val mimeType = arrayOf(
     "video/x-msvideo"
 )
 
-data class FilmxyCookies(
-    val phpsessid: String? = null,
-    val wLog: String? = null,
-    val wSec: String? = null,
-)
-
 fun String.filterIframe(
     seasonNum: Int? = null,
     lastSeason: Int? = null,
@@ -901,7 +895,7 @@ suspend fun getTvMoviesServer(url: String, season: Int?, episode: Int?): Pair<St
     }
 }
 
-suspend fun getFilmxyCookies(imdbId: String? = null, season: Int? = null): FilmxyCookies {
+suspend fun getFilmxyCookies(imdbId: String? = null, season: Int? = null): Map<String,String> {
 
     val url = if (season == null) {
         "${filmxyAPI}/movie/$imdbId"
@@ -917,14 +911,14 @@ suspend fun getFilmxyCookies(imdbId: String? = null, season: Int? = null): Filmx
         ),
     )
 
-    if (!res.isSuccessful) return FilmxyCookies()
+    if (!res.isSuccessful) return emptyMap()
 
     val userNonce =
         res.document.select("script").find { it.data().contains("var userNonce") }?.data()?.let {
             Regex("var\\suserNonce.*?\"(\\S+?)\";").find(it)?.groupValues?.get(1)
         }
 
-    var phpsessid = session.baseClient.cookieJar.loadForRequest(url.toHttpUrl())
+    val phpsessid = session.baseClient.cookieJar.loadForRequest(url.toHttpUrl())
         .first { it.name == "PHPSESSID" }.value
 
     session.post(
@@ -938,14 +932,8 @@ suspend fun getFilmxyCookies(imdbId: String? = null, season: Int? = null): Filmx
             "X-Requested-With" to "XMLHttpRequest",
         )
     )
-
-    val cookieJar = session.baseClient.cookieJar.loadForRequest(cookieUrl.toHttpUrl())
-    phpsessid = cookieJar.first { it.name == "PHPSESSID" }.value
-    val wLog =
-        cookieJar.first { it.name == "wordpress_logged_in_8bf9d5433ac88cc9a3a396d6b154cd01" }.value
-    val wSec = cookieJar.first { it.name == "wordpress_sec_8bf9d5433ac88cc9a3a396d6b154cd01" }.value
-
-    return FilmxyCookies(phpsessid, wLog, wSec)
+    val cookieJar = session.baseClient.cookieJar.loadForRequest(cookieUrl.toHttpUrl()).associate { it.name to it.value }.toMutableMap()
+    return cookieJar.plus(mapOf("G_ENABLED_IDPS" to "google"))
 }
 
 fun Document.findTvMoviesIframe(): String? {

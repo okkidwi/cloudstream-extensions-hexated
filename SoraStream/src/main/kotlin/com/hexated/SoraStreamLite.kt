@@ -29,7 +29,9 @@ import com.hexated.SoraExtractor.invokeSmashyStream
 import com.hexated.SoraExtractor.invokeDumpStream
 import com.hexated.SoraExtractor.invokeEmovies
 import com.hexated.SoraExtractor.invokeFourCartoon
+import com.hexated.SoraExtractor.invokeMoment
 import com.hexated.SoraExtractor.invokeMultimovies
+import com.hexated.SoraExtractor.invokeNetmovies
 import com.hexated.SoraExtractor.invokeVidSrc
 import com.hexated.SoraExtractor.invokeWatchOnline
 import com.hexated.SoraExtractor.invokeWatchsomuch
@@ -89,7 +91,15 @@ class SoraStreamLite : SoraStream() {
                 )
             },
             {
-                invokeGoku(res.title, res.year, res.season, res.lastSeason, res.episode, subtitleCallback, callback)
+                invokeGoku(
+                    res.title,
+                    res.year,
+                    res.season,
+                    res.lastSeason,
+                    res.episode,
+                    subtitleCallback,
+                    callback
+                )
             },
             {
                 invokeVidSrc(res.id, res.season, res.episode, subtitleCallback, callback)
@@ -189,7 +199,13 @@ class SoraStreamLite : SoraStream() {
                 )
             },
             {
-                if(!res.isAnime) invokeKimcartoon(res.title, res.season, res.episode, subtitleCallback, callback)
+                if (!res.isAnime) invokeKimcartoon(
+                    res.title,
+                    res.season,
+                    res.episode,
+                    subtitleCallback,
+                    callback
+                )
             },
             {
                 invokeSmashyStream(
@@ -222,7 +238,15 @@ class SoraStreamLite : SoraStream() {
                 )
             },
             {
-                invokeKisskh(res.title, res.season, res.episode, res.isAnime, res.lastSeason, subtitleCallback, callback)
+                invokeKisskh(
+                    res.title,
+                    res.season,
+                    res.episode,
+                    res.isAnime,
+                    res.lastSeason,
+                    subtitleCallback,
+                    callback
+                )
             },
             {
                 invokeLing(
@@ -302,7 +326,7 @@ class SoraStreamLite : SoraStream() {
                 )
             },
             {
-                if(!res.isAnime) invokeFourCartoon(
+                if (!res.isAnime) invokeFourCartoon(
                     res.title,
                     res.year,
                     res.season,
@@ -311,8 +335,21 @@ class SoraStreamLite : SoraStream() {
                 )
             },
             {
-                invokeMultimovies(res.title,res.season,res.episode,subtitleCallback,callback)
-            }
+                invokeMultimovies(res.title, res.season, res.episode, subtitleCallback, callback)
+            },
+            {
+                invokeNetmovies(
+                    res.title,
+                    res.year,
+                    res.season,
+                    res.episode,
+                    subtitleCallback,
+                    callback
+                )
+            },
+            {
+                invokeMoment(res.imdbId, res.season, res.episode, callback)
+            },
         )
 
         return true

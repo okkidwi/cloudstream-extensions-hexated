@@ -416,27 +416,7 @@ object SoraExtractor : SoraStream() {
         } else {
             "$idlixAPI/episode/$fixTitle-season-$season-episode-$episode"
         }
-
-        val res = app.get(url)
-        if (!res.isSuccessful) return
-        val referer = getBaseUrl(res.url)
-        val document = res.document
-        val id = document.select("meta#dooplay-ajax-counter").attr("data-postid")
-        val type = if (url.contains("/movie/")) "movie" else "tv"
-
-        document.select("ul#playeroptionsul > li").map {
-            it.attr("data-nume")
-        }.apmap { nume ->
-            val source = app.post(
-                url = "$referer/wp-admin/admin-ajax.php", data = mapOf(
-                    "action" to "doo_player_ajax", "post" to id, "nume" to nume, "type" to type
-                ), headers = mapOf("X-Requested-With" to "XMLHttpRequest"), referer = url
-            ).parsed<ResponseHash>().embed_url
-
-            if (!source.contains("youtube")) {
-                loadExtractor(source, "$referer/", subtitleCallback, callback)
-            }
-        }
+        invokeWpmovies(url,subtitleCallback, callback)
     }
 
     suspend fun invokeMultimovies(
@@ -452,22 +432,47 @@ object SoraExtractor : SoraStream() {
         } else {
             "$multimoviesAPI/episodes/$fixTitle-${season}x${episode}"
         }
+        invokeWpmovies(url,subtitleCallback, callback,true)
+    }
 
-        val res = app.get(url)
+    suspend fun invokeNetmovies(
+        title: String? = null,
+        year: Int? = null,
+        season: Int? = null,
+        episode: Int? = null,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ) {
+        val fixTitle = title.createSlug()
+        val url = if (season == null) {
+            "$netmoviesAPI/movies/$fixTitle-$year"
+        } else {
+            "$netmoviesAPI/episodes/$fixTitle-${season}x${episode}"
+        }
+        invokeWpmovies(url,subtitleCallback, callback)
+    }
+
+    private suspend fun invokeWpmovies(
+        url: String? = null,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit,
+        fixIframe: Boolean = false,
+    ) {
+        val res = app.get(url ?: return)
         val referer = getBaseUrl(res.url)
         val document = res.document
-        val id = document.select("meta#dooplay-ajax-counter").attr("data-postid")
-        val type = if (url.contains("/movies/")) "movie" else "tv"
-
         document.select("ul#playeroptionsul > li").map {
-            it.attr("data-nume")
-        }.apmap { nume ->
+            Triple(
+                it.attr("data-post"),
+                it.attr("data-nume"),
+                it.attr("data-type")
+            )
+        }.apmap { (id, nume, type) ->
             val source = app.post(
                 url = "$referer/wp-admin/admin-ajax.php", data = mapOf(
                     "action" to "doo_player_ajax", "post" to id, "nume" to nume, "type" to type
                 ), headers = mapOf("X-Requested-With" to "XMLHttpRequest"), referer = url
-            ).parsed<ResponseHash>().embed_url.let { Jsoup.parse(it).select("IFRAME").attr("SRC") }
-
+            ).parsed<ResponseHash>().embed_url.let { if(fixIframe) Jsoup.parse(it).select("IFRAME").attr("SRC") else it }
             if (!source.contains("youtube")) {
                 loadExtractor(source, "$referer/", subtitleCallback, callback)
             }
@@ -592,15 +597,7 @@ object SoraExtractor : SoraStream() {
             "${filmxyAPI}/tv/$imdbId"
         }
         val filmxyCookies = getFilmxyCookies(imdbId, season)
-
-        val cookiesDoc = mapOf(
-            "G_ENABLED_IDPS" to "google",
-            "wordpress_logged_in_8bf9d5433ac88cc9a3a396d6b154cd01" to (filmxyCookies.wLog
-                ?: return),
-            "PHPSESSID" to (filmxyCookies.phpsessid ?: return)
-        )
-
-        val doc = session.get(url, cookies = cookiesDoc).document
+        val doc = session.get(url, cookies = filmxyCookies).document
         val script = doc.selectFirst("script:containsData(var isSingle)")?.data() ?: return
 
         val sourcesData =
@@ -639,16 +636,9 @@ object SoraExtractor : SoraStream() {
             "&linkIDs%5B%5D=$it"
         }?.replace("\"", "")
 
-        val body = "action=get_vid_links$linkIDs&user_id=$userId&nonce=$userNonce".toRequestBody()
-        val cookiesJson = mapOf(
-            "G_ENABLED_IDPS" to "google",
-            "PHPSESSID" to "${filmxyCookies.phpsessid}",
-            "wordpress_logged_in_8bf9d5433ac88cc9a3a396d6b154cd01" to "${filmxyCookies.wLog}",
-            "wordpress_sec_8bf9d5433ac88cc9a3a396d6b154cd01" to "${filmxyCookies.wSec}"
-        )
         val json = app.post(
             "$filmxyAPI/wp-admin/admin-ajax.php",
-            requestBody = body,
+            requestBody = "action=get_vid_links$linkIDs&user_id=$userId&nonce=$userNonce".toRequestBody(),
             referer = url,
             headers = mapOf(
                 "Accept" to "*/*",
@@ -657,7 +647,7 @@ object SoraExtractor : SoraStream() {
                 "Origin" to filmxyAPI,
                 "X-Requested-With" to "XMLHttpRequest",
             ),
-            cookies = cookiesJson
+            cookies = filmxyCookies
         ).text.let { tryParseJson<HashMap<String, String>>(it) }
 
         sources?.map { source ->
@@ -2066,7 +2056,7 @@ object SoraExtractor : SoraStream() {
             it.attr("data-id") to it.text()
         }.apmap {
             when {
-                it.first.contains("/fix.php") && !isAnime -> {
+                (it.second.equals("Player F", true) || it.second.equals("Player N", true)) && !isAnime -> {
                     invokeSmashyFfix(it.second, it.first, url, callback)
                 }
                 it.first.contains("/gtop") -> {
@@ -3112,17 +3102,38 @@ object SoraExtractor : SoraStream() {
         episode: Int? = null,
         callback: (ExtractorLink) -> Unit,
     ) {
+        invokeHindi(navyAPI, navyAPI, imdbId, season, episode, callback)
+    }
+
+    suspend fun invokeMoment(
+        imdbId: String? = null,
+        season: Int? = null,
+        episode: Int? = null,
+        callback: (ExtractorLink) -> Unit,
+    ) {
+        invokeHindi(momentAPI, "https://hdmovies4u.green", imdbId, season, episode, callback)
+    }
+
+    private suspend fun invokeHindi(
+        host: String? = null,
+        referer: String? = null,
+        imdbId: String? = null,
+        season: Int? = null,
+        episode: Int? = null,
+        callback: (ExtractorLink) -> Unit,
+    ) {
         val res = app.get(
-            "$navyAPI/play/$imdbId",
-            referer = "$navyAPI/"
+            "$host/play/$imdbId",
+            referer = "$referer/"
         ).document.selectFirst("script:containsData(player =)")?.data()?.substringAfter("{")
             ?.substringBefore(";")?.substringBefore(")")
         val json = tryParseJson<NavyPlaylist>("{${res ?: return}")
         val headers = mapOf(
             "X-CSRF-TOKEN" to "${json?.key}"
         )
+
         val serverRes = app.get(
-            fixUrl(json?.file ?: return, navyAPI), headers = headers, referer = "$navyAPI/"
+            fixUrl(json?.file ?: return, navyAPI), headers = headers, referer = "$referer/"
         ).text.replace(Regex(""",\s*\[]"""), "")
         val server = tryParseJson<ArrayList<NavyServer>>(serverRes).let { server ->
             if (season == null) {
@@ -3137,15 +3148,15 @@ object SoraExtractor : SoraStream() {
         }
 
         val path = app.post(
-            "${navyAPI}/playlist/${server ?: return}.txt",
+            "${host}/playlist/${server ?: return}.txt",
             headers = headers,
-            referer = "$navyAPI/"
+            referer = "$referer/"
         ).text
 
         M3u8Helper.generateM3u8(
-            "Navy",
+            if(host == navyAPI) "Navy" else "Moment",
             path,
-            "${navyAPI}/"
+            "${referer}/"
         ).forEach(callback)
 
     }
