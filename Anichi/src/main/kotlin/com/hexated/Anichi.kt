@@ -1,12 +1,12 @@
 package com.hexated
 
-import com.hexated.AnichiExtractors.invokeExternalSources
 import com.hexated.AnichiExtractors.invokeInternalSources
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.LoadResponse.Companion.addActors
 import com.lagradost.cloudstream3.LoadResponse.Companion.addAniListId
 import com.lagradost.cloudstream3.LoadResponse.Companion.addMalId
 import com.lagradost.cloudstream3.LoadResponse.Companion.addTrailer
+import com.lagradost.cloudstream3.syncproviders.SyncIdName
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.parseJson
 import com.lagradost.nicehttp.RequestBodyTypes
@@ -27,6 +27,7 @@ open class Anichi : MainAPI() {
         }
     }
 
+    override val supportedSyncNames = setOf(SyncIdName.Anilist, SyncIdName.MyAnimeList)
     override val supportedTypes = setOf(TvType.Anime, TvType.AnimeMovie)
 
     private val popularTitle = "Popular"
@@ -110,6 +111,29 @@ open class Anichi : MainAPI() {
         }
     }
 
+    override suspend fun getLoadUrl(name: SyncIdName, id: String): String? {
+        val syncId = id.split("/").last()
+        val malId = if (name == SyncIdName.MyAnimeList) {
+            syncId
+        } else {
+            aniToMal(syncId)
+        }
+
+        val media = app.get("$jikanApi/anime/$malId").parsedSafe<JikanResponse>()?.data
+        val link =
+            """$apiUrl?variables={"search":{"allowAdult":false,"allowUnknown":false,"query":"${media?.title}"},"limit":26,"page":1,"translationType":"sub","countryOrigin":"ALL"}&extensions={"persistedQuery":{"version":1,"sha256Hash":"$mainHash"}}"""
+        val res = app.get(
+            link,
+            headers = headers
+        ).parsedSafe<AnichiQuery>()?.data?.shows?.edges
+        return res?.find {
+            (it.name.equals(media?.title, true) || it.englishName.equals(
+                media?.title_english,
+                true
+            ) || it.nativeName.equals(media?.title_japanese, true)) && it.airedStart?.year == media?.year
+        }?.Id
+    }
+
     override suspend fun load(url: String): LoadResponse? {
 
         val id = url.substringAfterLast("/")
@@ -189,25 +213,12 @@ open class Anichi : MainAPI() {
 
         val loadData = parseJson<AnichiLoadData>(data)
 
-        argamap(
-            {
-                invokeInternalSources(
-                    loadData.hash,
-                    loadData.dubStatus,
-                    loadData.episode,
-                    subtitleCallback,
-                    callback
-                )
-            },
-            {
-                invokeExternalSources(
-                    loadData.idMal,
-                    loadData.dubStatus,
-                    loadData.episode,
-                    subtitleCallback,
-                    callback
-                )
-            }
+        invokeInternalSources(
+            loadData.hash,
+            loadData.dubStatus,
+            loadData.episode,
+            subtitleCallback,
+            callback
         )
 
         return true
@@ -218,7 +229,8 @@ open class Anichi : MainAPI() {
         const val serverUrl = BuildConfig.ANICHI_SERVER
         const val apiEndPoint = BuildConfig.ANICHI_ENDPOINT
 
-        const val marinHost = "https://marin.moe"
+        const val anilistApi = "https://graphql.anilist.co"
+        const val jikanApi = "https://api.jikan.moe/v4"
 
         private const val mainHash = "e42a4466d984b2c0a2cecae5dd13aa68867f634b16ee0f17b380047d14482406"
         private const val popularHash = "31a117653812a2547fd981632e8c99fa8bf8a75c4ef1a77a1567ef1741a7ab9c"

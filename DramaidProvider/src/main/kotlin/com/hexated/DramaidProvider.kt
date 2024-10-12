@@ -3,7 +3,6 @@ package com.hexated
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.extractors.XStreamCdn
-import com.lagradost.cloudstream3.utils.AppUtils
 import com.lagradost.cloudstream3.utils.AppUtils.tryParseJson
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.getQualityFromName
@@ -12,7 +11,7 @@ import org.jsoup.Jsoup
 import org.jsoup.nodes.Element
 
 open class DramaidProvider : MainAPI() {
-    override var mainUrl = "https://dramaid.best"
+    override var mainUrl = "https://dramaid.skin"
     override var name = "DramaId"
     override val hasMainPage = true
     override var lang = "id"
@@ -94,11 +93,9 @@ open class DramaidProvider : MainAPI() {
         val episodes = document.select(".eplister > ul > li").mapNotNull {
             val name = it.selectFirst("a > .epl-title")?.text()
             val link = fixUrl(it.selectFirst("a")?.attr("href") ?: return@mapNotNull null)
-            val epNum = it.selectFirst(".epl-num")?.text()?.toIntOrNull()
             Episode(
                 link,
                 name,
-                episode = epNum
             )
         }.reversed()
 
@@ -197,17 +194,12 @@ open class DramaidProvider : MainAPI() {
                     callback
                 )
 
-                else -> loadExtractor(it, data, subtitleCallback, callback)
+                else -> loadExtractor(it, "$mainUrl/", subtitleCallback, callback)
             }
         }
 
         return true
     }
 
-}
-
-class Vanfem : XStreamCdn() {
-    override val name: String = "Vanfem"
-    override val mainUrl: String = "https://vanfem.com"
 }
 

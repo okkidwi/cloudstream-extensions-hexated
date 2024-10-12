@@ -9,6 +9,31 @@ data class AnichiLoadData(
     val idMal: Int? = null,
 )
 
+data class JikanData(
+    @JsonProperty("title") val title: String? = null,
+    @JsonProperty("title_english") val title_english: String? = null,
+    @JsonProperty("title_japanese") val title_japanese: String? = null,
+    @JsonProperty("year") val year: Int? = null,
+    @JsonProperty("season") val season: String? = null,
+    @JsonProperty("type") val type: String? = null,
+)
+
+data class JikanResponse(
+    @JsonProperty("data") val data: JikanData? = null,
+)
+
+data class IdMal(
+    @JsonProperty("idMal") val idMal: String? = null,
+)
+
+data class MediaAni(
+    @JsonProperty("Media") val media: IdMal? = null,
+)
+
+data class DataAni(
+    @JsonProperty("data") val data: MediaAni? = null,
+)
+
 data class CoverImage(
     @JsonProperty("extraLarge") var extraLarge: String? = null,
     @JsonProperty("large") var large: String? = null,
@@ -215,7 +240,6 @@ data class PageStatus(
     @JsonProperty("__typename") val _typename: String? = null
 )
 
-
 data class Recommendations(
     @JsonProperty("anyCard") val anyCard: AnyCard? = null,
     @JsonProperty("pageStatus") val pageStatus: PageStatus? = PageStatus(),
@@ -230,38 +254,4 @@ data class QueryPopular(
 
 data class DataPopular(
     @JsonProperty("queryPopular") val queryPopular: QueryPopular? = QueryPopular()
-)
-
-data class MALSyncSites(
-    @JsonProperty("Zoro") val zoro: HashMap<String?, HashMap<String, String?>>? = hashMapOf(),
-    @JsonProperty("Marin") val marin: HashMap<String?, HashMap<String, String?>>? = hashMapOf(),
-)
-
-data class MALSyncResponses(
-    @JsonProperty("Sites") val sites: MALSyncSites? = null,
-)
-
-data class MarinCode(
-    @JsonProperty("file") val file: String? = null,
-    @JsonProperty("height") val height: Int? = null,
-)
-
-data class MarinMirror(
-    @JsonProperty("code") val code: MarinCode? = null,
-)
-
-data class MarinData(
-    @JsonProperty("mirror") val mirror: ArrayList<MarinMirror>? = arrayListOf(),
-)
-
-data class MarinVideos(
-    @JsonProperty("data") val data: MarinData? = null,
-)
-
-data class MarinProps(
-    @JsonProperty("video") val video: MarinVideos? = null,
-)
-
-data class MarinResponses(
-    @JsonProperty("props") val props: MarinProps? = null,
 )

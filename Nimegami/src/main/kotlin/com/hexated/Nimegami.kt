@@ -2,12 +2,13 @@ package com.hexated
 
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.lagradost.cloudstream3.*
+import com.lagradost.cloudstream3.LoadResponse.Companion.addAniListId
+import com.lagradost.cloudstream3.LoadResponse.Companion.addMalId
 import com.lagradost.cloudstream3.LoadResponse.Companion.addTrailer
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.tryParseJson
 import org.jsoup.nodes.Element
 import org.jsoup.select.Elements
-import java.net.URI
 
 class Nimegami : MainAPI() {
     override var mainUrl = "https://nimegami.id"
@@ -75,14 +76,18 @@ class Nimegami : MainAPI() {
             this.posterUrl = posterUrl
             addSub(episode)
         }
-
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        return app.get("$mainUrl/?s=$query&post_type=post").document.select("div.archive article")
-            .mapNotNull {
-                it.toSearchResult()
-            }
+        val searchResponse = mutableListOf<SearchResponse>()
+        for (i in 1..2) {
+            val res = app.get("$mainUrl/page/$i/?s=$query&post_type=post").document.select("div.archive article")
+                .mapNotNull {
+                    it.toSearchResult()
+                }
+            searchResponse.addAll(res)
+        }
+        return searchResponse
     }
 
     override suspend fun load(url: String): LoadResponse {
@@ -96,15 +101,16 @@ class Nimegami : MainAPI() {
 
         val year = table.getContent("Musim / Rilis").text().filter { it.isDigit() }.toIntOrNull()
         val status = getStatus(document.selectFirst("h1[itemprop=headline]")?.text())
-        val type = table.getContent("Type").text()
+        val type = getType(table.getContent("Type").text())
         val description = document.select("div#Sinopsis p").text().trim()
         val trailer = document.selectFirst("div#Trailer iframe")?.attr("src")
 
         val episodes = document.select("div.list_eps_stream li")
             .mapNotNull {
-                val name = it.text()
+                val episode = Regex("Episode\\s?(\\d+)").find(it.text())?.groupValues?.getOrNull(0)
+                    ?.toIntOrNull()
                 val link = it.attr("data")
-                Episode(link, name)
+                Episode(link, episode = episode)
             }
 
         val recommendations = document.select("div#randomList > a").mapNotNull {
@@ -118,10 +124,12 @@ class Nimegami : MainAPI() {
             }
         }
 
-        return newAnimeLoadResponse(title, url, getType(type)) {
+        val tracker = APIHolder.getTracker(listOf(title), TrackerType.getTypes(type), year, true)
+
+        return newAnimeLoadResponse(title, url, type) {
             engName = title
-            posterUrl = poster
-            backgroundPosterUrl = bgPoster
+            posterUrl = tracker?.image ?: poster
+            backgroundPosterUrl = tracker?.cover ?: bgPoster
             this.year = year
             addEpisodes(DubStatus.Subbed, episodes)
             showStatus = status
@@ -129,6 +137,8 @@ class Nimegami : MainAPI() {
             this.tags = tags
             this.recommendations = recommendations
             addTrailer(trailer)
+            addMalId(tracker?.malId)
+            addAniListId(tracker?.aniId?.toIntOrNull())
         }
 
     }
@@ -142,7 +152,13 @@ class Nimegami : MainAPI() {
 
         tryParseJson<ArrayList<Sources>>(base64Decode(data))?.map { sources ->
             sources.url?.apmap { url ->
-                loadFixedExtractor(url.fixIframe(), sources.format, "$mainUrl/", subtitleCallback, callback)
+                loadFixedExtractor(
+                    url,
+                    sources.format,
+                    "$mainUrl/",
+                    subtitleCallback,
+                    callback
+                )
             }
         }
 
@@ -164,7 +180,7 @@ class Nimegami : MainAPI() {
                     link.url,
                     link.referer,
                     getQualityFromName(quality),
-                    link.isM3u8,
+                    link.type,
                     link.headers,
                     link.extractorData
                 )
@@ -172,26 +188,8 @@ class Nimegami : MainAPI() {
         }
     }
 
-    private fun getBaseUrl(url: String): String {
-        return URI(url).let {
-            "${it.scheme}://${it.host}"
-        }
-    }
-
-    private fun Elements.getContent(css: String) : Elements {
+    private fun Elements.getContent(css: String): Elements {
         return this.select("tr:contains($css) td:last-child")
-    }
-
-    private fun String.fixIframe() : String {
-        val url = base64Decode(this.substringAfter("url=").substringAfter("id="))
-        val host = getBaseUrl(url)
-        return when {
-            url.contains("hxfile") -> {
-                val id = url.substringAfterLast("/")
-                "$host/embed-$id.html"
-            }
-            else -> fixUrl(url)
-        }
     }
 
     data class Sources(

@@ -2,8 +2,10 @@ package com.hexated
 
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
+import com.lagradost.nicehttp.NiceResponse
 import com.lagradost.nicehttp.Requests
 import com.lagradost.nicehttp.Session
+import kotlinx.coroutines.delay
 import org.jsoup.nodes.Element
 import java.net.URI
 
@@ -12,7 +14,7 @@ class Nekopoi : MainAPI() {
     override var name = "Nekopoi"
     override val hasMainPage = true
     override var lang = "id"
-
+    private val fetch by lazy { Session(app.baseClient) }
     override val supportedTypes = setOf(
         TvType.NSFW,
     )
@@ -24,7 +26,6 @@ class Nekopoi : MainAPI() {
             "DropApk",
             "Racaty",
             "ZippyShare",
-            "ZippySha",
             "VideobinCo",
             "DropApk",
             "SendCm",
@@ -53,7 +54,7 @@ class Nekopoi : MainAPI() {
         page: Int,
         request: MainPageRequest
     ): HomePageResponse {
-        val document = app.get("${request.data}/page/$page").document
+        val document = fetch.get("${request.data}/page/$page").document
         val home = document.select("div.result ul li").mapNotNull {
             it.toSearchResult()
         }
@@ -90,14 +91,14 @@ class Nekopoi : MainAPI() {
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        return app.get("$mainUrl/search/$query").document.select("div.result ul li")
+        return fetch.get("$mainUrl/search/$query").document.select("div.result ul li")
             .mapNotNull {
                 it.toSearchResult()
             }
     }
 
     override suspend fun load(url: String): LoadResponse {
-        val document = app.get(url).document
+        val document = fetch.get(url).document
 
         val title = document.selectFirst("span.desc b, div.eroinfo h1")?.text()?.trim() ?: ""
         val poster = fixUrlNull(document.selectFirst("div.imgdesc img, div.thm img")?.attr("src"))
@@ -141,7 +142,7 @@ class Nekopoi : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
 
-        val res = app.get(data).document
+        val res = fetch.get(data).document
 
         argamap(
             {
@@ -169,8 +170,8 @@ class Nekopoi : MainAPI() {
                                     link.name,
                                     link.url,
                                     link.referer,
-                                    if(link.isM3u8) link.quality else it.first,
-                                    link.isM3u8,
+                                    if (link.type == ExtractorLinkType.M3U8) link.quality else it.first,
+                                    link.type,
                                     link.headers,
                                     link.extractorData
                                 )
@@ -226,17 +227,29 @@ class Nekopoi : MainAPI() {
         return res.headers["location"]
     }
 
+    private fun NiceResponse.selectMirror(): String? {
+        return this.document.selectFirst("script:containsData(#passcheck)")?.data()
+            ?.substringAfter("\"GET\", \"")?.substringBefore("\"")
+    }
+
     private suspend fun bypassMirrored(url: String?): List<String?> {
-        val request = app.get(url ?: return emptyList())
-        var nextUrl = request.document.selectFirst("div.row div.centered a")?.attr("href")
-        nextUrl = app.get(nextUrl ?: return emptyList()).text.substringAfter("\"GET\", \"")
-            .substringBefore("\"")
-        return app.get(fixUrl(nextUrl, mirroredHost)).document.select("table.hoverable tbody tr")
+        val request = session.get(url ?: return emptyList())
+        delay(2000)
+        val mirrorUrl = request.selectMirror() ?: run {
+            val nextUrl = request.document.select("div.col-sm.centered.extra-top a").attr("href")
+            app.get(nextUrl).selectMirror()
+        }
+        return session.get(
+            fixUrl(
+                mirrorUrl ?: return emptyList(),
+                mirroredHost
+            )
+        ).document.select("table.hoverable tbody tr")
             .filter { mirror ->
                 !mirrorIsBlackList(mirror.selectFirst("img")?.attr("alt"))
             }.apmap {
                 val fileLink = it.selectFirst("a")?.attr("href")
-                app.get(
+                session.get(
                     fixUrl(
                         fileLink ?: return@apmap null,
                         mirroredHost
@@ -245,7 +258,7 @@ class Nekopoi : MainAPI() {
             }
     }
 
-    private fun mirrorIsBlackList(host: String?) : Boolean {
+    private fun mirrorIsBlackList(host: String?): Boolean {
         return mirrorBlackList.any { it.equals(host, true) }
     }
 
@@ -269,8 +282,11 @@ class Nekopoi : MainAPI() {
     }
 
     private fun getIndexQuality(str: String?): Int {
-        return Regex("(\\d{3,4})[pP]").find(str ?: "")?.groupValues?.getOrNull(1)?.toIntOrNull()
-            ?: Qualities.Unknown.value
+        return when (val quality =
+            Regex("""(?i)\[(\d+[pk])]""").find(str ?: "")?.groupValues?.getOrNull(1)?.lowercase()) {
+            "2k" -> Qualities.P1440.value
+            else -> getQualityFromName(quality)
+        }
     }
 
 }

@@ -11,5 +11,7 @@ class OtakudesuProviderPlugin: Plugin() {
         // All providers should be added in this manner. Please don't edit the providers list directly.
         registerMainAPI(OtakudesuProvider())
         registerExtractorAPI(Moedesu())
+        registerExtractorAPI(DesuBeta())
+        registerExtractorAPI(Desudesuhd())
     }
 }

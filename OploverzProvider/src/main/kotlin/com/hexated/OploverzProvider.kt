@@ -1,12 +1,13 @@
 package com.hexated
 
 import com.lagradost.cloudstream3.*
-import com.lagradost.cloudstream3.extractors.Filesim
+import com.lagradost.cloudstream3.LoadResponse.Companion.addAniListId
+import com.lagradost.cloudstream3.LoadResponse.Companion.addMalId
 import com.lagradost.cloudstream3.utils.*
 import org.jsoup.nodes.Element
 
 class OploverzProvider : MainAPI() {
-    override var mainUrl = "https://oploverz.care"
+    override var mainUrl = "https://oploverz.gold"
     override var name = "Oploverz"
     override val hasMainPage = true
     override var lang = "id"
@@ -19,7 +20,6 @@ class OploverzProvider : MainAPI() {
     )
 
     companion object {
-        const val acefile = "https://acefile.co"
         fun getType(t: String): TvType {
             return if (t.contains("OVA", true) || t.contains("Special")) TvType.OVA
             else if (t.contains("Movie", true)) TvType.AnimeMovie
@@ -113,18 +113,21 @@ class OploverzProvider : MainAPI() {
 
         val title = document.selectFirst("h1.entry-title")?.text()
             ?.replace("Subtitle Indonesia", "")?.trim() ?: ""
-        val type = document.selectFirst("div.alternati span.type")?.text() ?: ""
-
+        val type = getType(document.selectFirst("div.alternati span.type")?.text() ?: "")
+        val year = document.selectFirst("div.alternati a")?.text()?.filter { it.isDigit() }?.toIntOrNull()
         val episodes = document.select("div.lstepsiode.listeps ul li").mapNotNull {
             val header = it.selectFirst("a") ?: return@mapNotNull null
             val episode = header.text().trim().toIntOrNull()
             val link = fixUrl(header.attr("href"))
-            Episode(link, header.text(), episode = episode)
+            Episode(link, episode = episode)
         }.reversed()
 
-        return newAnimeLoadResponse(title, url, getType(type)) {
-            posterUrl = document.selectFirst("div.thumb > img")?.attr("src")
-            this.year = document.selectFirst("div.alternati a")?.text()?.filter { it.isDigit() }?.toIntOrNull()
+        val tracker = APIHolder.getTracker(listOf(title),TrackerType.getTypes(type),year,true)
+
+        return newAnimeLoadResponse(title, url, type) {
+            posterUrl = tracker?.image ?: document.selectFirst("div.thumb > img")?.attr("src")
+            backgroundPosterUrl = tracker?.cover
+            this.year = year
             addEpisodes(DubStatus.Subbed, episodes)
             showStatus =
                 getStatus(
@@ -133,6 +136,8 @@ class OploverzProvider : MainAPI() {
             plot = document.selectFirst("div.entry-content > p")?.text()?.trim()
             this.tags =
                 document.select("div.genre-info a").map { it.text() }
+            addMalId(tracker?.malId)
+            addAniListId(tracker?.aniId?.toIntOrNull())
         }
     }
 
@@ -164,14 +169,14 @@ class OploverzProvider : MainAPI() {
                         headers = mapOf("X-Requested-With" to "XMLHttpRequest")
                     ).document.select("iframe").attr("src")
 
-                    loadExtractor(fixedIframe(iframe), "$mainUrl/", subtitleCallback, callback)
+                    loadExtractor(fixUrl(iframe), "$mainUrl/", subtitleCallback, callback)
 
                 }
             },
             {
-                document.select("div#download tr").map { el ->
+                document.select("div#download tr").apmap { el ->
                     el.select("a").apmap {
-                        loadFixedExtractor(fixedIframe(it.attr("href")), el.select("strong").text(), "$mainUrl/", subtitleCallback, callback)
+                        loadFixedExtractor(fixUrl(it.attr("href")), el.select("strong").text(), "$mainUrl/", subtitleCallback, callback)
                     }
                 }
             }
@@ -195,7 +200,7 @@ class OploverzProvider : MainAPI() {
                     link.url,
                     link.referer,
                     name.fixQuality(),
-                    link.isM3u8,
+                    link.type,
                     link.headers,
                     link.extractorData
                 )
@@ -208,14 +213,6 @@ class OploverzProvider : MainAPI() {
             "MP4HD" -> Qualities.P720.value
             "FULLHD" -> Qualities.P1080.value
             else -> Regex("(\\d{3,4})p").find(this)?.groupValues?.get(1)?.toIntOrNull() ?: Qualities.Unknown.value
-        }
-    }
-
-    private fun fixedIframe(url: String): String {
-        val id = Regex("""(?:/f/|/file/)(\w+)""").find(url)?.groupValues?.getOrNull(1)
-        return when {
-            url.startsWith(acefile) -> "${acefile}/player/$id"
-            else -> fixUrl(url)
         }
     }
 

@@ -4,18 +4,20 @@ import com.fasterxml.jackson.annotation.JsonProperty
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.LoadResponse.Companion.addActors
 import com.lagradost.cloudstream3.LoadResponse.Companion.addTrailer
-import com.lagradost.cloudstream3.mvvm.safeApiCall
+import com.lagradost.cloudstream3.extractors.helper.AesHelper
+import com.lagradost.cloudstream3.network.CloudflareKiller
 import com.lagradost.cloudstream3.utils.*
 import org.jsoup.nodes.Element
 import java.net.URI
 
 class IdlixProvider : MainAPI() {
-    override var mainUrl = "https://idlixian.com"
+    override var mainUrl = "https://tv.idlixofficial.co"
     private var directUrl = mainUrl
     override var name = "Idlix"
     override val hasMainPage = true
     override var lang = "id"
     override val hasDownloadSupport = true
+    private val cloudflareKiller by lazy { CloudflareKiller() }
     override val supportedTypes = setOf(
         TvType.Movie,
         TvType.TvSeries,
@@ -29,9 +31,9 @@ class IdlixProvider : MainAPI() {
         "$mainUrl/trending/page/?get=tv" to "Trending TV Series",
         "$mainUrl/movie/page/" to "Movie Terbaru",
         "$mainUrl/tvseries/page/" to "TV Series Terbaru",
-        "$mainUrl/network/netflix/page/" to "Netflix",
-        "$mainUrl/genre/anime/page/" to "Anime",
-        "$mainUrl/genre/drama-korea/page/" to "Drama Korea",
+//        "$mainUrl/network/netflix/page/" to "Netflix",
+//        "$mainUrl/genre/anime/page/" to "Anime",
+//        "$mainUrl/genre/drama-korea/page/" to "Drama Korea",
     )
 
     private fun getBaseUrl(url: String): String {
@@ -70,11 +72,13 @@ class IdlixProvider : MainAPI() {
                 title = Regex("(.+?)-season").find(title)?.groupValues?.get(1).toString()
                 "$mainUrl/tvseries/$title"
             }
+
             uri.contains("/season/") -> {
                 var title = uri.substringAfter("$mainUrl/season/")
                 title = Regex("(.+?)-season").find(title)?.groupValues?.get(1).toString()
                 "$mainUrl/tvseries/$title"
             }
+
             else -> {
                 uri
             }
@@ -190,39 +194,112 @@ class IdlixProvider : MainAPI() {
     ): Boolean {
 
         val document = app.get(data).document
-        val id = document.select("meta#dooplay-ajax-counter").attr("data-postid")
-        val type = if (data.contains("/movie/")) "movie" else "tv"
-
         document.select("ul#playeroptionsul > li").map {
-            it.attr("data-nume")
-        }.apmap { nume ->
-            safeApiCall {
-                var source = app.post(
-                    url = "$directUrl/wp-admin/admin-ajax.php",
-                    data = mapOf(
-                        "action" to "doo_player_ajax",
-                        "post" to id,
-                        "nume" to nume,
-                        "type" to type
-                    ),
-                    headers = mapOf("X-Requested-With" to "XMLHttpRequest"),
-                    referer = data
-                ).parsed<ResponseHash>().embed_url
+            Triple(
+                it.attr("data-post"),
+                it.attr("data-nume"),
+                it.attr("data-type")
+            )
+        }.apmap { (id, nume, type) ->
+            val json = app.post(
+                url = "$directUrl/wp-admin/admin-ajax.php", data = mapOf(
+                    "action" to "doo_player_ajax", "post" to id, "nume" to nume, "type" to type
+                ), referer = data, headers = mapOf("Accept" to "*/*", "X-Requested-With" to "XMLHttpRequest")
+            ).parsedSafe<ResponseHash>() ?: return@apmap
+            val metrix = AppUtils.parseJson<AesData>(json.embed_url).m
+            val password = createKey(json.key, metrix)
+            val decrypted = AesHelper.cryptoAESHandler(json.embed_url, password.toByteArray(), false)?.fixBloat() ?: return@apmap
 
-                if (source.startsWith("https://uservideo.xyz")) {
-                    source = app.get(source).document.select("iframe").attr("src")
-                }
-                loadExtractor(source, directUrl, subtitleCallback, callback)
-
+            when {
+                !decrypted.contains("youtube") -> getUrl(decrypted, "$directUrl/", subtitleCallback, callback)
+                else -> return@apmap
             }
         }
 
         return true
     }
 
+    private fun createKey(r: String, m: String): String {
+        val rList = r.split("\\x").toTypedArray()
+        var n = ""
+        val decodedM = String(base64Decode(m.split("").reversed().joinToString("")).toCharArray())
+        for (s in decodedM.split("|")) {
+            n += "\\x" + rList[Integer.parseInt(s) + 1]
+        }
+        return n
+    }
+
+    private fun String.fixBloat(): String {
+        return this.replace("\"", "").replace("\\", "")
+    }
+
+    private suspend fun getUrl(
+        url: String,
+        referer: String?,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ) {
+        val document = app.get(url, referer = referer).document
+        val hash = url.split("/").last().substringAfter("data=")
+
+        val m3uLink = app.post(
+            url = "https://jeniusplay.com/player/index.php?data=$hash&do=getVideo",
+            data = mapOf("hash" to hash, "r" to "$referer"),
+            referer = referer,
+            headers = mapOf("X-Requested-With" to "XMLHttpRequest")
+        ).parsed<ResponseSource>().videoSource
+
+        M3u8Helper.generateM3u8(
+            this.name,
+            m3uLink,
+            "$referer",
+        ).forEach(callback)
+
+
+        document.select("script").map { script ->
+            if (script.data().contains("eval(function(p,a,c,k,e,d)")) {
+                val subData =
+                    getAndUnpack(script.data()).substringAfter("\"tracks\":[").substringBefore("],")
+                AppUtils.tryParseJson<List<Tracks>>("[$subData]")?.map { subtitle ->
+                    subtitleCallback.invoke(
+                        SubtitleFile(
+                            getLanguage(subtitle.label ?: ""),
+                            subtitle.file
+                        )
+                    )
+                }
+            }
+        }
+    }
+
+    private fun getLanguage(str: String): String {
+        return when {
+            str.contains("indonesia", true) || str
+                .contains("bahasa", true) -> "Indonesian"
+            else -> str
+        }
+    }
+
+    data class ResponseSource(
+        @JsonProperty("hls") val hls: Boolean,
+        @JsonProperty("videoSource") val videoSource: String,
+        @JsonProperty("securedLink") val securedLink: String?,
+    )
+
+    data class Tracks(
+        @JsonProperty("kind") val kind: String?,
+        @JsonProperty("file") val file: String,
+        @JsonProperty("label") val label: String?,
+    )
+
     data class ResponseHash(
         @JsonProperty("embed_url") val embed_url: String,
-        @JsonProperty("type") val type: String?,
+        @JsonProperty("key") val key: String,
     )
+
+    data class AesData(
+        @JsonProperty("m") val m: String,
+    )
+
 
 }

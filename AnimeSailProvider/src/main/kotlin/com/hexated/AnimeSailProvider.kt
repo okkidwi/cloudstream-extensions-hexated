@@ -1,8 +1,11 @@
 package com.hexated
 
 import com.lagradost.cloudstream3.*
+import com.lagradost.cloudstream3.LoadResponse.Companion.addAniListId
+import com.lagradost.cloudstream3.LoadResponse.Companion.addMalId
 import com.lagradost.cloudstream3.mvvm.safeApiCall
 import com.lagradost.cloudstream3.utils.ExtractorLink
+import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.loadExtractor
 import com.lagradost.nicehttp.NiceResponse
@@ -107,18 +110,21 @@ class AnimeSailProvider : MainAPI() {
         val title = document.selectFirst("h1.entry-title")?.text().toString()
             .replace("Subtitle Indonesia", "").trim()
         val poster = document.selectFirst("div.entry-content > img")?.attr("src")
-        val type = document.select("tbody th:contains(Tipe)").next().text().lowercase()
+        val type = getType(document.select("tbody th:contains(Tipe)").next().text().lowercase())
         val year = document.select("tbody th:contains(Dirilis)").next().text().trim().toIntOrNull()
 
         val episodes = document.select("ul.daftar > li").map {
             val link = fixUrl(it.select("a").attr("href"))
             val name = it.select("a").text()
             val episode = Regex("Episode\\s?(\\d+)").find(name)?.groupValues?.getOrNull(0)?.toIntOrNull()
-            Episode(link, name, episode = episode)
+            Episode(link, episode = episode)
         }.reversed()
 
-        return newAnimeLoadResponse(title, url, getType(type)) {
-            posterUrl = poster
+        val tracker = APIHolder.getTracker(listOf(title),TrackerType.getTypes(type),year,true)
+
+        return newAnimeLoadResponse(title, url, type) {
+            posterUrl = tracker?.image ?: poster
+            backgroundPosterUrl = tracker?.cover
             this.year = year
             addEpisodes(DubStatus.Subbed, episodes)
             showStatus =
@@ -126,6 +132,8 @@ class AnimeSailProvider : MainAPI() {
             plot = document.selectFirst("div.entry-content > p")?.text()
             this.tags =
                 document.select("tbody th:contains(Genre)").next().select("a").map { it.text() }
+            addMalId(tracker?.malId)
+            addAniListId(tracker?.aniId?.toIntOrNull())
         }
     }
 
@@ -144,7 +152,7 @@ class AnimeSailProvider : MainAPI() {
                     Jsoup.parse(base64Decode(it.attr("data-em"))).select("iframe").attr("src")
                         ?: throw ErrorLoadingException("No iframe found")
                 )
-
+                val quality = getIndexQuality(it.text())
                 when {
                     iframe.startsWith("$mainUrl/utils/player/arch/") || iframe.startsWith(
                         "$mainUrl/utils/player/race/"
@@ -156,15 +164,13 @@ class AnimeSailProvider : MainAPI() {
                                     iframe.contains("/race/") -> "Race"
                                     else -> this.name
                                 }
-                            val quality =
-                                Regex("\\.(\\d{3,4})\\.").find(link)?.groupValues?.get(1)
                             callback.invoke(
                                 ExtractorLink(
                                     source = source,
                                     name = source,
                                     url = link,
                                     referer = mainUrl,
-                                    quality = quality?.toIntOrNull() ?: Qualities.Unknown.value
+                                    quality = quality
                                 )
                             )
                         }
@@ -175,22 +181,50 @@ class AnimeSailProvider : MainAPI() {
                         val link = "https://rasa-cintaku-semakin-berantai.xyz/v/${
                             iframe.substringAfter("id=").substringBefore("&token")
                         }"
-                        loadExtractor(link, mainUrl, subtitleCallback, callback)
+                        loadFixedExtractor(link, quality, mainUrl, subtitleCallback, callback)
                     }
                     iframe.startsWith("$mainUrl/utils/player/framezilla/") || iframe.startsWith("https://uservideo.xyz") -> {
                         request(iframe, ref = data).document.select("iframe").attr("src")
                             .let { link ->
-                                loadExtractor(fixUrl(link), mainUrl, subtitleCallback, callback)
+                                loadFixedExtractor(fixUrl(link), quality, mainUrl, subtitleCallback, callback)
                             }
                     }
                     else -> {
-                        loadExtractor(iframe, mainUrl, subtitleCallback, callback)
+                        loadFixedExtractor(iframe, quality, mainUrl, subtitleCallback, callback)
                     }
                 }
             }
         }
 
         return true
+    }
+
+    private suspend fun loadFixedExtractor(
+        url: String,
+        quality: Int?,
+        referer: String? = null,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ) {
+        loadExtractor(url, referer, subtitleCallback) { link ->
+            callback.invoke(
+                ExtractorLink(
+                    link.name,
+                    link.name,
+                    link.url,
+                    link.referer,
+                    if(link.type == ExtractorLinkType.M3U8) link.quality else quality ?: Qualities.Unknown.value,
+                    link.type,
+                    link.headers,
+                    link.extractorData
+                )
+            )
+        }
+    }
+
+    private fun getIndexQuality(str: String): Int {
+        return Regex("(\\d{3,4})[pP]").find(str)?.groupValues?.getOrNull(1)?.toIntOrNull()
+            ?: Qualities.Unknown.value
     }
 
 }
